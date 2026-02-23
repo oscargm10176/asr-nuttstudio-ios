@@ -1,61 +1,446 @@
-//
-//  ContentView.swift
-//  ASR
-//
-//  Created by THRICE on 22/02/26.
-//
-
 import SwiftUI
-import SwiftData
+import UniformTypeIdentifiers
+import Combine
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var vm = ASRViewModel()
+
+    @State private var showPickLibrary = false
+    @State private var showPickFile = false
+    @State private var showPickCover = false
+
+    @State private var showDeleteConfirm = false
+    @State private var shareSheet: ShareSheet?
 
     var body: some View {
+        rootView
+    }
+
+    // MARK: - Root
+
+    private var rootView: some View {
         NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
+            SidebarView(
+                vm: vm,
+                showPickLibrary: $showPickLibrary,
+                showPickFile: $showPickFile,
+                showPickCover: $showPickCover,
+                showDeleteConfirm: $showDeleteConfirm
+            )
         } detail: {
-            Text("Select an item")
+            MainView(
+                vm: vm,
+                showDeleteConfirm: $showDeleteConfirm,
+                shareSheet: $shareSheet
+            )
         }
+        .task { await vm.boot() }
+        .modifier(PickersAndDialogs(
+            vm: vm,
+            showPickLibrary: $showPickLibrary,
+            showPickFile: $showPickFile,
+            showPickCover: $showPickCover,
+            showDeleteConfirm: $showDeleteConfirm,
+            shareSheet: $shareSheet
+        ))
     }
+}
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+// MARK: - ViewModifier (breaks the big type graph)
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+private struct PickersAndDialogs: ViewModifier {
+    @ObservedObject var vm: ASRViewModel
+
+    @Binding var showPickLibrary: Bool
+    @Binding var showPickFile: Bool
+    @Binding var showPickCover: Bool
+    @Binding var showDeleteConfirm: Bool
+    @Binding var shareSheet: ShareSheet?
+
+    func body(content: Content) -> some View {
+        content
+            .alert("ASR", isPresented: $vm.showAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(vm.alertMessage)
             }
+            .fileImporter(
+                isPresented: $showPickLibrary,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let u = urls.first { vm.setRootFolder(u) }
+                case .failure(let e):
+                    vm.alert("No pude seleccionar folder. \(e.localizedDescription)")
+                }
+            }
+            .fileImporter(
+                isPresented: $showPickFile,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let u = urls.first { vm.setFile(u) }
+                case .failure(let e):
+                    vm.alert("No pude seleccionar archivo. \(e.localizedDescription)")
+                }
+            }
+            .fileImporter(
+                isPresented: $showPickCover,
+                allowedContentTypes: [.png, .jpeg, .webP, .image],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let u = urls.first { vm.importCover(from: u) }
+                case .failure(let e):
+                    vm.alert("No pude seleccionar imagen. \(e.localizedDescription)")
+                }
+            }
+            .confirmationDialog(
+                "Delete asset?",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    Task { await vm.deleteSelected() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(vm.selected?.name ?? "")
+            }
+            .sheet(item: $shareSheet) { sheet in
+                sheet
+            }
+    }
+}
+
+// MARK: - Sidebar
+
+private struct SidebarView: View {
+    @ObservedObject var vm: ASRViewModel
+
+    @Binding var showPickLibrary: Bool
+    @Binding var showPickFile: Bool
+    @Binding var showPickCover: Bool
+    @Binding var showDeleteConfirm: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView { bodyContent }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Library").font(.caption).foregroundStyle(.secondary)
+
+            Text(vm.rootURL?.path ?? "No folder selected")
+                .font(.footnote)
+                .lineLimit(2)
+                .textSelection(.enabled)
+
+            HStack {
+                Button("Select Folder") { showPickLibrary = true }
+                    .buttonStyle(.borderedProminent)
+                Spacer()
+            }
+        }
+        .padding(14)
+    }
+
+    private var bodyContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+
+            filePickerCard
+
+            metadataCard
+
+            fileTypeCard
+
+        }
+        .padding(14)
+        .opacity(vm.rootURL == nil ? 0.65 : 1.0)
+    }
+
+    private var filePickerCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("File").font(.headline)
+
+            Text(vm.fileURL?.lastPathComponent ?? "No file selected")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            HStack {
+                Button("Pick File") { showPickFile = true }
+                    .disabled(vm.rootURL == nil)
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary, lineWidth: 1))
+    }
+
+    private var metadataCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Metadata").font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Nombre").font(.caption).foregroundStyle(.secondary)
+                TextField("Ej: Cinematic Trailer MP4", text: $vm.name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tags").font(.caption).foregroundStyle(.secondary)
+                TextField("Ej: trailer, 2026, mp4, marketing", text: $vm.tags)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cover").font(.caption).foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button(vm.isPickingCover ? "Importing..." : "Pick Image") {
+                        showPickCover = true
+                    }
+                    .disabled(vm.rootURL == nil || vm.isPickingCover)
+
+                    coverThumb
+                }
+
+                if !vm.coverRelPath.isEmpty {
+                    Text("Saved as: \(vm.coverRelPath)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button(vm.isEditing ? "Update Asset" : "Save to Catalog") {
+                Task { vm.isEditing ? await vm.update() : await vm.save() }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canSave)
+
+            if vm.isEditing {
+                Button("Cancel") { vm.cancelEdit() }
+                    .buttonStyle(.bordered)
+
+                Button("Delete") { showDeleteConfirm = true }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+            }
+
+            if vm.rootURL == nil {
+                Text("Selecciona “Library Folder” para habilitar el resto.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+    }
+
+    @ViewBuilder
+    private var coverThumb: some View {
+        if let cover = vm.coverURL,
+           let ui = ASRImageLoader.uiImage(fromFilePath: cover.path) {
+            Image(uiImage: ui)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 46, height: 46)
+                .clipped()
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+        } else {
+            Text("No image").foregroundStyle(.secondary)
+        }
+    }
+
+    private var fileTypeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("File Type").font(.headline)
+
+            // En iOS, ToggleStyle.radio puede causar problemas dependiendo de SDK.
+            // Mejor usar Picker inline.
+            Picker("File Type", selection: $vm.fileTypeFilter) {
+                ForEach(FileTypeFilter.allCases) { t in
+                    Text(t.label).tag(t)
+                }
+            }
+            .pickerStyle(.inline)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+    }
+
+    private var canSave: Bool {
+        let hasRoot = vm.rootURL != nil
+        let hasFileOrSelected = (vm.fileURL != nil) || (vm.selected != nil)
+        let hasName = !vm.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasTags = !vm.tags.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let notPicking = !vm.isPickingCover
+
+        if vm.isEditing {
+            return hasRoot && hasFileOrSelected && hasName && hasTags && notPicking
+        } else {
+            return hasRoot && hasFileOrSelected && hasName && hasTags && notPicking && !vm.coverRelPath.isEmpty
         }
     }
 }
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+// MARK: - Main
+
+private struct MainView: View {
+    @ObservedObject var vm: ASRViewModel
+
+    @Binding var showDeleteConfirm: Bool
+    @Binding var shareSheet: ShareSheet?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            topbar
+            Divider()
+            ScrollView { listOrGrid }
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var topbar: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Catalog").font(.title2).bold()
+                Text("\(vm.filteredAssets.count) items")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 10) {
+                TextField("Buscar por nombre o tags...", text: $vm.q)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 320)
+
+                Picker("", selection: $vm.viewMode) {
+                    Text("Grid").tag(ViewMode.grid)
+                    Text("List").tag(ViewMode.list)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+
+                Button("Refresh") {
+                    Task {
+                        do { try await vm.refresh() }
+                        catch { vm.alert("No pude refrescar. \(error.localizedDescription)") }
+                    }
+                }
+                .disabled(vm.rootURL == nil)
+            }
+        }
+        .padding(14)
+    }
+
+    @ViewBuilder
+    private var listOrGrid: some View {
+        if vm.viewMode == .list {
+            LazyVStack(spacing: 10) {
+                ForEach(vm.filteredAssets) { a in
+                    AssetCard(asset: a, isSelected: vm.selected?.id == a.id)
+                        .onTapGesture { vm.startEdit(a) }
+                        .contextMenu {
+                            Button("Share") {
+                                shareSheet = ShareSheet(activityItems: [URL(fileURLWithPath: a.sourcePath)])
+                            }
+                        }
+                }
+            }
+            .padding(14)
+        } else {
+            let cols = [GridItem(.adaptive(minimum: 180), spacing: 14)]
+            LazyVGrid(columns: cols, spacing: 14) {
+                ForEach(vm.filteredAssets) { a in
+                    AssetCard(asset: a, isSelected: vm.selected?.id == a.id)
+                        .onTapGesture { vm.startEdit(a) }
+                        .contextMenu {
+                            Button("Share") {
+                                shareSheet = ShareSheet(activityItems: [URL(fileURLWithPath: a.sourcePath)])
+                            }
+                        }
+                }
+            }
+            .padding(14)
+        }
+    }
+}
+
+// MARK: - Card
+
+private struct AssetCard: View {
+    let asset: AssetRow
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            cover
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(asset.name).font(.headline).lineLimit(1)
+                Text(asset.tags).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(URL(fileURLWithPath: asset.sourcePath).lastPathComponent)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.thinMaterial))
+        .overlay(selectionBorder)
+    }
+
+    private var selectionBorder: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .strokeBorder(
+                isSelected ? Color.accentColor : Color.secondary.opacity(0.25),
+                lineWidth: isSelected ? 2 : 1
+            )
+    }
+
+    private var cover: some View {
+        ZStack(alignment: .topTrailing) {
+            if let ui = ASRImageLoader.uiImage(fromFilePath: asset.coverPath) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 120)
+                    .clipped()
+                    .cornerRadius(14)
+            } else {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.quaternary)
+                    .frame(height: 120)
+            }
+
+            Text(getFileExtLabel(asset.sourcePath))
+                .font(.caption2)
+                .bold()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+                .cornerRadius(10)
+                .padding(8)
+        }
+    }
 }

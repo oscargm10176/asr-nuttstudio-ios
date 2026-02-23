@@ -8,7 +8,6 @@
 import SwiftUI
 import SwiftData
 
-@main
 struct ASRApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
