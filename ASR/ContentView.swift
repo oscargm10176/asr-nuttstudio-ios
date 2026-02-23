@@ -54,6 +54,32 @@ struct ContentView: View {
                 }
             )
         }
+        .sheet(isPresented: $showPickFile) {
+            FilePicker(
+                allowedTypes: [.item],
+                asCopy: false, // para assets: no copies (dejas el original y luego tu código lo copia a library)
+                onPick: { url in
+                    showPickFile = false
+                    vm.setFile(url)
+                },
+                onCancel: {
+                    showPickFile = false
+                }
+            )
+        }
+        .sheet(isPresented: $showPickCover) {
+            FilePicker(
+                allowedTypes: [.png, .jpeg, .webP, .image],
+                asCopy: true, // para cover: sí conviene copiar
+                onPick: { url in
+                    showPickCover = false
+                    vm.importCover(from: url)
+                },
+                onCancel: {
+                    showPickCover = false
+                }
+            )
+        }
     }
 }
 
