@@ -424,22 +424,44 @@ private struct AssetCard: View {
             )
     }
 
+    @Environment(\.horizontalSizeClass) private var hSize
+
+    private var coverSize: CGSize {
+        if hSize == .compact {
+            return CGSize(width: 120, height: 80)
+        } else {
+            return CGSize(width: 160, height: 100)
+        }
+    }
     private var cover: some View {
         ZStack(alignment: .topTrailing) {
             let fixedCoverPath = asset.coverPath.replacingOccurrences(of: "\\", with: "/")
-            if let ui = ASRImageLoader.uiImage(fromFilePath: fixedCoverPath) {
-                Image(uiImage: ui)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: 120)
-                    .clipped()
-                    .cornerRadius(14)
-            } else {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(.quaternary)
-                    .frame(height: 120)
-            }
 
+            Group {
+                if let ui = ASRImageLoader.uiImage(fromFilePath: fixedCoverPath) {
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.quaternary)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .font(.title3)
+                                .foregroundStyle(.tertiary)
+                        )
+                }
+            }
+            // 👇 tamaño responsive
+            .frame(width: coverSize.width, height: coverSize.height)
+            .clipped()
+            .cornerRadius(14)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(.quaternary)
+            )
+
+            // badge extensión
             Text(getFileExtLabel(asset.sourcePath))
                 .font(.caption2)
                 .bold()
@@ -449,5 +471,7 @@ private struct AssetCard: View {
                 .cornerRadius(10)
                 .padding(8)
         }
+        // 👇 evita que el HStack lo deforme
+        .fixedSize()
     }
 }
