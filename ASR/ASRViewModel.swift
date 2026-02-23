@@ -93,7 +93,8 @@ final class ASRViewModel: ObservableObject {
 
             do {
                 let imported = try files.importCover(root: root, source: picked)
-                coverURL = URL(fileURLWithPath: imported.coverAbsPath)
+                let fixedPath = imported.coverAbsPath.replacingOccurrences(of: "\\", with: "/")
+                coverURL = URL(fileURLWithPath: fixedPath)
                 coverRelPath = imported.coverRelPath
             } catch {
                 alert("No pude leer/importar la imagen. \(error.localizedDescription)")

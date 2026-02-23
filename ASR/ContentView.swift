@@ -252,15 +252,20 @@ private struct SidebarView: View {
 
     @ViewBuilder
     private var coverThumb: some View {
-        if let cover = vm.coverURL,
-           let ui = ASRImageLoader.uiImage(fromFilePath: cover.path) {
-            Image(uiImage: ui)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 46, height: 46)
-                .clipped()
-                .cornerRadius(10)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+        if let cover = vm.coverURL {
+            let fixedPath = cover.path.replacingOccurrences(of: "\\", with: "/")
+
+            if let ui = ASRImageLoader.uiImage(fromFilePath: fixedPath) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 46, height: 46)
+                    .clipped()
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+            } else {
+                Text("No image").foregroundStyle(.secondary)
+            }
         } else {
             Text("No image").foregroundStyle(.secondary)
         }
@@ -421,7 +426,8 @@ private struct AssetCard: View {
 
     private var cover: some View {
         ZStack(alignment: .topTrailing) {
-            if let ui = ASRImageLoader.uiImage(fromFilePath: asset.coverPath) {
+            let fixedCoverPath = asset.coverPath.replacingOccurrences(of: "\\", with: "/")
+            if let ui = ASRImageLoader.uiImage(fromFilePath: fixedCoverPath) {
                 Image(uiImage: ui)
                     .resizable()
                     .scaledToFill()
