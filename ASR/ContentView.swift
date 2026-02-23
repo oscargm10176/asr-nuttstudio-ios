@@ -43,6 +43,17 @@ struct ContentView: View {
             showDeleteConfirm: $showDeleteConfirm,
             shareSheet: $shareSheet
         ))
+        .sheet(isPresented: $showPickLibrary) {
+            FolderPicker(
+                onPick: { url in
+                    showPickLibrary = false
+                    vm.setRootFolder(url)
+                },
+                onCancel: {
+                    showPickLibrary = false
+                }
+            )
+        }
     }
 }
 
@@ -63,42 +74,6 @@ private struct PickersAndDialogs: ViewModifier {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(vm.alertMessage)
-            }
-            .fileImporter(
-                isPresented: $showPickLibrary,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    if let u = urls.first { vm.setRootFolder(u) }
-                case .failure(let e):
-                    vm.alert("No pude seleccionar folder. \(e.localizedDescription)")
-                }
-            }
-            .fileImporter(
-                isPresented: $showPickFile,
-                allowedContentTypes: [.item],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    if let u = urls.first { vm.setFile(u) }
-                case .failure(let e):
-                    vm.alert("No pude seleccionar archivo. \(e.localizedDescription)")
-                }
-            }
-            .fileImporter(
-                isPresented: $showPickCover,
-                allowedContentTypes: [.png, .jpeg, .webP, .image],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    if let u = urls.first { vm.importCover(from: u) }
-                case .failure(let e):
-                    vm.alert("No pude seleccionar imagen. \(e.localizedDescription)")
-                }
             }
             .confirmationDialog(
                 "Delete asset?",

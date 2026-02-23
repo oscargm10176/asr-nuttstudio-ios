@@ -43,9 +43,10 @@ final class ASRViewModel: ObservableObject {
     }
 
     func boot() async {
-        guard let url = bookmarks.loadBookmarkedURL() else { return }
-        if url.startAccessingSecurityScopedResource() {
-            self.rootURL = url
+        if let path = UserDefaults.standard.string(forKey: "asr.rootDir.path") {
+            let url = URL(fileURLWithPath: path)
+            _ = url.startAccessingSecurityScopedResource()
+            rootURL = url
             do {
                 try openDBIfPossible()
                 try await refresh()
@@ -54,12 +55,17 @@ final class ASRViewModel: ObservableObject {
     }
 
     func setRootFolder(_ url: URL) {
-        rootURL?.stopAccessingSecurityScopedResource()
+        // iOS: no hay security-scoped bookmarks persistentes.
+        // Solo guardamos la ruta como referencia (opcional).
+        UserDefaults.standard.set(url.path, forKey: "asr.rootDir.path")
 
-        do { try bookmarks.saveBookmark(for: url) }
-        catch { return alert("No pude guardar permisos del folder.") }
+        // Intentar acceso (depende del proveedor Files)
+        let granted = url.startAccessingSecurityScopedResource()
+        if !granted {
+            alert("No pude obtener permisos del folder (Files provider). Intenta elegir un folder en “On My iPhone/iPad”.")
+            // Aún así guardamos rootURL para que puedas ver en UI
+        }
 
-        _ = url.startAccessingSecurityScopedResource()
         rootURL = url
         resetFormAll()
 
@@ -68,7 +74,7 @@ final class ASRViewModel: ObservableObject {
                 try openDBIfPossible()
                 try await refresh()
             } catch {
-                alert("No pude abrir el library. \(error.localizedDescription)")
+                alert("No pude abrir el library.\n\(error.localizedDescription)")
             }
         }
     }
