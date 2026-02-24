@@ -317,10 +317,46 @@ private struct MainView: View {
             topbar
             Divider()
             ScrollView { listOrGrid }
+            paginatorBar
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
     }
+    private var pickerQty:some View{
+        HStack{
+            Picker("Limit", selection: $vm.pageLimit) {
+                Text("10").tag(10)
+                Text("50").tag(50)
+                Text("100").tag(100)
+                Text("200").tag(200)
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+        }
+    }
+    private var paginatorBar: some View {
+        HStack(spacing: 12) {
+            Text(vm.pageRangeText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button("Prev") { vm.goPrevPage() }
+                .disabled(vm.currentPage <= 1)
+
+            Text("Page \(vm.currentPage) / \(vm.totalPages)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 120, alignment: .center)
+
+            Button("Next") { vm.goNextPage() }
+                .disabled(vm.currentPage >= vm.totalPages)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
+    }
+
 
     private var topbar: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -330,6 +366,7 @@ private struct MainView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+          
 
             Spacer()
 
@@ -345,13 +382,16 @@ private struct MainView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 160)
 
-                Button("Refresh") {
+                Button {
                     Task {
                         do { try await vm.refresh() }
                         catch { vm.alert("No pude refrescar. \(error.localizedDescription)") }
                     }
+                } label: {
+                    Label("", systemImage: "arrow.clockwise")
                 }
                 .disabled(vm.rootURL == nil)
+                pickerQty
             }
         }
         .padding(14)
@@ -361,7 +401,7 @@ private struct MainView: View {
     private var listOrGrid: some View {
         if vm.viewMode == .list {
             LazyVStack(spacing: 10) {
-                ForEach(vm.filteredAssets) { a in
+                ForEach(vm.pagedAssets) { a in
                     AssetCard(asset: a, isSelected: vm.selected?.id == a.id)
                         .onTapGesture { vm.startEdit(a) }
                         .contextMenu {
@@ -375,7 +415,7 @@ private struct MainView: View {
         } else {
             let cols = [GridItem(.adaptive(minimum: 180), spacing: 14)]
             LazyVGrid(columns: cols, spacing: 14) {
-                ForEach(vm.filteredAssets) { a in
+                ForEach(vm.pagedAssets) { a in
                     AssetCard(asset: a, isSelected: vm.selected?.id == a.id)
                         .onTapGesture { vm.startEdit(a) }
                         .contextMenu {
@@ -473,5 +513,6 @@ private struct AssetCard: View {
         }
         // 👇 evita que el HStack lo deforme
         .fixedSize()
+        
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 import SwiftUI
-import Combine  
+import Combine
 
 @MainActor
 final class ASRViewModel: ObservableObject {
@@ -29,6 +29,45 @@ final class ASRViewModel: ObservableObject {
     private let files = ASRFileService()
     private let db = ASRDatabase()
 
+    // MARK: - Combine
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Pagination
+    @Published var pageLimit: Int = 10          // inicial 10
+    @Published var currentPage: Int = 1
+
+    // MARK: - Init
+    init() {
+        setupBindings()
+    }
+
+    private func setupBindings() {
+        // Cuando cambia búsqueda o filtro → vuelve a página 1
+        Publishers.Merge(
+            $q.map { _ in () }.eraseToAnyPublisher(),
+            $fileTypeFilter.map { _ in () }.eraseToAnyPublisher()
+        )
+        .sink { [weak self] in
+            self?.resetToFirstPage()
+        }
+        .store(in: &cancellables)
+
+        // Cuando cambia el límite → vuelve a página 1
+        $pageLimit
+            .sink { [weak self] _ in
+                self?.resetToFirstPage()
+            }
+            .store(in: &cancellables)
+
+        // Si cambian los assets (refresh, delete, etc.) → clampa página para no quedar fuera de rango
+        $assets
+            .sink { [weak self] _ in
+                self?.clampPageIfNeeded()
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Filtering
     var filteredAssets: [AssetRow] {
         let term = q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return assets.filter { a in
@@ -42,6 +81,50 @@ final class ASRViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Pagination helpers
+    var totalItems: Int { filteredAssets.count }
+
+    var totalPages: Int {
+        max(1, Int(ceil(Double(totalItems) / Double(pageLimit))))
+    }
+
+    var pagedAssets: [AssetRow] {
+        guard !filteredAssets.isEmpty else { return [] }
+
+        let safePage = min(max(currentPage, 1), totalPages)
+        let start = (safePage - 1) * pageLimit
+        let end = min(start + pageLimit, filteredAssets.count)
+
+        if start >= filteredAssets.count { return [] }
+        return Array(filteredAssets[start..<end])
+    }
+
+    var pageRangeText: String {
+        guard totalItems > 0 else { return "0 of 0" }
+        let safePage = min(max(currentPage, 1), totalPages)
+        let start = (safePage - 1) * pageLimit + 1
+        let end = min(start + pageLimit - 1, totalItems)
+        return "\(start)-\(end) of \(totalItems)"
+    }
+
+    func goPrevPage() {
+        currentPage = max(1, currentPage - 1)
+    }
+
+    func goNextPage() {
+        currentPage = min(totalPages, currentPage + 1)
+    }
+
+    func clampPageIfNeeded() {
+        currentPage = min(max(1, currentPage), totalPages)
+    }
+
+    func resetToFirstPage() {
+        currentPage = 1
+        clampPageIfNeeded()
+    }
+
+    // MARK: - Lifecycle
     func boot() async {
         if let path = UserDefaults.standard.string(forKey: "asr.rootDir.path") {
             let url = URL(fileURLWithPath: path)
@@ -68,6 +151,7 @@ final class ASRViewModel: ObservableObject {
 
         rootURL = url
         resetFormAll()
+        resetToFirstPage()
 
         Task {
             do {
@@ -110,6 +194,7 @@ final class ASRViewModel: ObservableObject {
         }
         try openDBIfPossible()
         assets = try db.listAssets(root: root)
+        clampPageIfNeeded()
     }
 
     func startEdit(_ a: AssetRow) {
@@ -158,6 +243,7 @@ final class ASRViewModel: ObservableObject {
             )
 
             resetFormAfterSave()
+            resetToFirstPage()
             try await refresh()
         } catch {
             alert("No pude guardar. \(error.localizedDescription)")
@@ -183,6 +269,7 @@ final class ASRViewModel: ObservableObject {
             )
 
             cancelEdit()
+            clampPageIfNeeded()
             try await refresh()
         } catch {
             alert("No pude actualizar. \(error.localizedDescription)")
@@ -205,6 +292,7 @@ final class ASRViewModel: ObservableObject {
             }
 
             cancelEdit()
+            clampPageIfNeeded()
             try await refresh()
         } catch {
             alert("No pude borrar. \(error.localizedDescription)")
